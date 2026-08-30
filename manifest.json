@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "quran",
+  "name": "Quran",
+  "version": "1.0.0",
+  "author": "ronald2wing",
+  "license": "MIT",
+  "description": "Illuminated mushaf reader — Quran with offline search, 16-collection Hadith browser, prayer times with adhan, Arabic/English bilingual UI. Works offline.",
+  "keywords": ["quran", "islam", "hadith", "prayer", "adhan", "reader"],
+  "kinds": ["bar-widget", "service"],
+  "entryPoints": { "barWidget": "BarWidget.qml", "service": "PrayerService.qml" },
+  "barWidget": {
+    "displayName": "Quran",
+    "description": "Quran reader, Hadith browser, prayer times, bilingual Arabic/English",
+    "category": "Reference",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

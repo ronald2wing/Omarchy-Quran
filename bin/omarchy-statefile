@@ -1,0 +1,54 @@
+#!/usr/bin/env node
+"use strict"
+// Pinned read/write for the panel's three JSON state files. Check-and-use in
+// one open: O_NOFOLLOW on the leaf, O_DIRECTORY|O_NOFOLLOW on the parent (held
+// via /proc/self/fd), fstat on the opened fd, and read from that same fd.
+// Writes go through a temp file inside the pinned dir and an atomic rename
+// (rename replaces a symlink, never follows it).
+
+const fs = require("fs")
+const path = require("path")
+
+const MAX_BYTES = 65536
+const O = fs.constants
+
+function refuse(msg) { process.stderr.write((msg || "refused") + "\n"); process.exit(1) }
+
+function pinDir(dir) {
+  return fs.openSync(dir, O.O_RDONLY | O.O_DIRECTORY | O.O_NOFOLLOW)
+}
+function leafPath(dirFd, name) { return "/proc/self/fd/" + dirFd + "/" + name }
+
+function main() {
+  const mode = process.argv[2]
+  const target = process.argv[3]
+  if (!mode || !target) refuse("usage")
+  const name = path.basename(target)
+  if (!name || name === "." || name === ".." || name.indexOf("/") !== -1) refuse("bad name")
+
+  if (mode === "write") fs.mkdirSync(path.dirname(target), { recursive: true })
+  const dirFd = pinDir(path.dirname(target))
+
+  if (mode === "read") {
+    const fd = fs.openSync(leafPath(dirFd, name), O.O_RDONLY | O.O_NOFOLLOW | O.O_NONBLOCK)
+    const st = fs.fstatSync(fd)
+    if (!st.isFile() || st.size > MAX_BYTES) { fs.closeSync(fd); refuse() }
+    const buf = Buffer.alloc(st.size)
+    let off = 0
+    while (off < buf.length) { const n = fs.readSync(fd, buf, off, buf.length - off, off); if (n <= 0) break; off += n }
+    fs.closeSync(fd)
+    process.stdout.write(buf)
+    return
+  }
+
+  if (mode === "write") {
+    const data = String(process.argv[4] || "").slice(0, MAX_BYTES)
+    const tmp = leafPath(dirFd, "." + name + "-tmp-" + process.pid)
+    const fd = fs.openSync(tmp, O.O_WRONLY | O.O_CREAT | O.O_EXCL | O.O_NOFOLLOW, 0o600)
+    try { fs.writeSync(fd, data, 0, "utf8"); fs.fsyncSync(fd) } finally { fs.closeSync(fd) }
+    fs.renameSync(tmp, leafPath(dirFd, name))
+    return
+  }
+  refuse("bad mode")
+}
+main()

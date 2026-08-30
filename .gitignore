@@ -1,0 +1,21 @@
+# Node
+node_modules/
+
+# Build artifacts
+*.qmlc
+*.jsc
+
+# IDE
+.vscode/
+.idea/
+
+# Screenshots
+screenshot-*.png
+
+# macOS
+.DS_Store
+
+# Temp files
+*.tmp
+*.swp
+*.swo

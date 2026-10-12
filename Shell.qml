@@ -80,6 +80,7 @@ Panel {
   property var prayerTimes: root.prayerService ? root.prayerService.prayerTimes : ({})
   property int prayerTick: root.prayerService ? root.prayerService.prayerTick : 0
   property bool soundPlaying: root.prayerService ? root.prayerService.soundPlaying : false
+  property string nextPrayerName: root.prayerService ? root.prayerService.nextPrayerName : ""
 
   property bool adhanEnabled   // persisted — user opts in
   onAdhanEnabledChanged: root.pushToPrayerService()
@@ -109,14 +110,39 @@ Panel {
 
   // Push UI locale + persisted adhan preference into the singleton. Re-pushed
   // when the service resolves so notification text follows the active language.
+  // Persisted coordinates from quran-state.json, pushed into the service
+  // once it resolves. The service accepts them only if weather hasn't already
+  // won (weather is authoritative).
+  property real _pendingLat: 0.0
+  property real _pendingLon: 0.0
+
   function pushToPrayerService() {
     if (!root.prayerService) return
     root.prayerService.language = root.language
     root.prayerService.adhanEnabled = root.adhanEnabled
+    if (root._pendingLat !== 0.0 || root._pendingLon !== 0.0) {
+      if (typeof root.prayerService.setLocation === "function") {
+        root.prayerService.setLocation(root._pendingLat, root._pendingLon, "persisted")
+      }
+      root._pendingLat = 0.0
+      root._pendingLon = 0.0
+    }
+    // The service may have resolved coords before this panel connected (the tz
+    // probe fires ~1.5s after load; service resolution can lag). Pull them so
+    // they still get persisted.
+    root.persistServiceCoordinates()
   }
 
   onPrayerServiceChanged: root.pushToPrayerService()
   onLanguageChanged: root.pushToPrayerService()
+
+  // The service emitted coords (weather read or tz probe) — persist them so a
+  // restart reuses the fix instead of probing again.
+  Connections {
+    target: root.prayerService
+    enabled: !!root.prayerService
+    function onLocationResolved() { root.persistServiceCoordinates() }
+  }
 
   Timer {
     id: prayerServiceRetry
@@ -170,6 +196,10 @@ Panel {
           && (parsed.language === "english" || parsed.language === "arabic" || parsed.language === "both"))
           root.language = parsed.language
         if (typeof parsed.adhanEnabled === "boolean") root.adhanEnabled = parsed.adhanEnabled
+        if (typeof parsed.prayerLatitude === "number" && Number.isFinite(parsed.prayerLatitude))
+          root._pendingLat = parsed.prayerLatitude
+        if (typeof parsed.prayerLongitude === "number" && Number.isFinite(parsed.prayerLongitude))
+          root._pendingLon = parsed.prayerLongitude
       }
       root.stateReady = true
       root.applyRestoredState()
@@ -204,13 +234,49 @@ Panel {
     }
   }
 
+  // Coordinates the service resolved (weather read or tz probe). Staged so a
+  // restart reuses them instead of re-probing.
+  property bool _coordsWriteOwed: false
+
+  function persistServiceCoordinates() {
+    if (!root.prayerService) return
+    var lat = root.prayerService.prayerLatitude
+    var lon = root.prayerService.prayerLongitude
+    if (!(typeof lat === "number" && Number.isFinite(lat))) return
+    if (!(typeof lon === "number" && Number.isFinite(lon))) return
+    if (!root.prayerService.hasLocation()) return
+    root._pendingLat = lat
+    root._pendingLon = lon
+    // The state file may not have loaded yet; persistState() would drop the
+    // write, so remember it and flush once stateReady turns true.
+    if (!root.stateReady) { root._coordsWriteOwed = true; return }
+    root.persistState()
+  }
+
   function persistState() {
     if (!root.stateReady) return
+    var lat = root._pendingLat
+    var lon = root._pendingLon
+    if (root.prayerService && !root.prayerService.hasLocation()) {
+      lat = root.prayerService.prayerLatitude
+      lon = root.prayerService.prayerLongitude
+    }
     stateFile.setText(JSON.stringify({
       surahId: root.surah, ayahN: root.ayah,
       dailyAyat: root.dailyAyat, language: root.language,
-      adhanEnabled: root.adhanEnabled
+      adhanEnabled: root.adhanEnabled,
+      prayerLatitude: lat,
+      prayerLongitude: lon
     }))
+  }
+
+  function applyRestoredState() {
+    if (root._coordsWriteOwed) {
+      root._coordsWriteOwed = false
+      root.persistState()
+    }
+    if (!root.quran || !root.stateReady) return
+    root.ensureVerseOfDay()
   }
 
   function saveTabState() {
@@ -223,11 +289,6 @@ Panel {
     interval: 500
     repeat: false
     onTriggered: { if (root.opened) root.persistState() }
-  }
-
-  function applyRestoredState() {
-    if (!root.quran || !root.stateReady) return
-    root.ensureVerseOfDay()
   }
 
   function onReaderPositionChanged() {

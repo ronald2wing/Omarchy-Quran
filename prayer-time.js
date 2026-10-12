@@ -134,12 +134,69 @@ function computePrayerTimes(date, latitude, longitude, options) {
   }
 }
 
+// ---- timezone coordinate helpers -------------------------------------------
+// ISO 6709 compact representation: ±DDMM[SS]±DDDMM[SS].
+// Latitude: 2-digit degrees, minutes, optional seconds. Longitude: 3-digit.
+// The second sign (at position 5 or 7) marks the longitude field start.
+// Returns {latitude, longitude} or null for malformed/empty input.
+function parseIso6709(s) {
+  if (typeof s !== "string" || s.length < 9) return null
+
+  // Find the second sign character (longitude sign).
+  var split = 0
+  for (var i = 1; i < s.length; i++) {
+    if (s.charAt(i) === "+" || s.charAt(i) === "-") {
+      split = i
+      break
+    }
+  }
+  if (split === 0) return null
+
+  function decode(v, deg) {
+    var sign = v.charAt(0) === "-" ? -1 : 1
+    var d = v.substring(1)
+    if (d.length < deg + 2) return NaN
+    return sign * (
+      Number(d.substring(0, deg))
+      + Number(d.substring(deg, deg + 2)) / 60
+      + (d.length >= deg + 4 ? Number(d.substring(deg + 2, deg + 4)) / 3600 : 0)
+    )
+  }
+
+  var lat = decode(s.substring(0, split), 2)
+  var lon = decode(s.substring(split), 3)
+  if (!isFinite(lat) || !isFinite(lon)) return null
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null
+  return { latitude: lat, longitude: lon }
+}
+
+// Resolve a timezone identifier (e.g. "America/New_York") to approximate
+// coordinates from the system zone tab (zone1970.tab or zone.tab).
+// `zoneTabText` is the raw content of the file. Returns {latitude, longitude}
+// or null when the timezone is not found.
+function resolveTimezoneCoordinate(zoneTabText, tz) {
+  if (typeof zoneTabText !== "string" || typeof tz !== "string") return null
+  var lines = zoneTabText.split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (line.length === 0 || line.charAt(0) === "#") continue
+    var fields = line.split("\t")
+    // zone.tab: #0=country, #1=coords, #2=tz. zone1970.tab same.
+    if (fields.length >= 3 && fields[2] === tz) {
+      return parseIso6709(fields[1])
+    }
+  }
+  return null
+}
+
 // ---- Node / module exports ------------------------------------------------
 // QML's JS engine has no `module`; the guard skips the block under QML import
 // while Node require() sees module.exports. `typeof` never throws for an
 // undeclared identifier, so no try/catch is needed.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    computePrayerTimes: computePrayerTimes
+    computePrayerTimes: computePrayerTimes,
+    parseIso6709: parseIso6709,
+    resolveTimezoneCoordinate: resolveTimezoneCoordinate
   }
 }

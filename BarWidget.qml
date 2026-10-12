@@ -22,27 +22,14 @@ BarWidget {
   // status line and the button tooltip fallback.
   readonly property string statusLabel: service.todayReference !== "" ? service.todayReference : __("tab.quran")
 
-  // Prayer-service singleton — resolved by retry timer (same pattern as
-  // Shell.qml). Qt 5.15 does not deeply re-eval bindings through C++-backed
-  // properties, so firstPartyServiceFor may return null on the first tick.
-  property var prayerService: null
-
-  function resolvePrayerService() {
-    if (root.prayerService) return true
-    if (!root.bar || !root.bar.shell) return false
-    var svc = root.bar.shell.firstPartyServiceFor("quran")
-    if (svc) root.prayerService = svc
-    return !!svc
-  }
-
   // Combine next prayer time + today's ayah in the tooltip.
   readonly property string tooltipLabel: {
     var parts = []
-    var svc = root.prayerService
-    if (svc) {
-      var times = svc.prayerTimes
-      var tick = svc.prayerTick  // force binding re-eval every 10s
-      var name = svc.nextPrayerName
+    var panel = panelLoader.item  // Shell instance; null until the panel loads
+    if (panel) {
+      var times = panel.prayerTimes
+      var tick = panel.prayerTick  // scalar int — forces binding re-eval every 10s
+      var name = panel.nextPrayerName
       if (name && times[name]) parts.push(__("tooltip.prayer") + " " + __("prayer." + name) + " " + times[name])
     }
     if (service.todayReference !== "") parts.push(__("tooltip.ayah") + " " + service.todayReference)
@@ -90,20 +77,7 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  onBarChanged: {
-    root.injectPanel()
-    Qt.callLater(function() {
-      if (!root.resolvePrayerService()) prayerServiceRetry.start()
-    })
-  }
-
-  Timer {
-    id: prayerServiceRetry
-    interval: 1000
-    repeat: true
-    running: false
-    onTriggered: { if (root.resolvePrayerService()) stop() }
-  }
+  onBarChanged: root.injectPanel()
 
   Loader {
     id: panelLoader
